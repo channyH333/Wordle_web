@@ -1,16 +1,11 @@
+
 import os
 import random
-import secrets
 import threading
 import webbrowser
 
 from flask import Flask, jsonify, render_template_string, request, session
 from wordfreq import iter_wordlist
-
-
-# =========================================================
-# SETTINGS
-# =========================================================
 
 WORD_LENGTH = 5
 MAX_ATTEMPTS = 6
@@ -28,17 +23,12 @@ WRONG_MESSAGES = [
 WIN_MESSAGE = "Way to go Shawty 🎉"
 
 
-# =========================================================
-# WORDS
-# =========================================================
-
 def load_common_words(limit=ANSWER_POOL_SIZE):
     words = []
     seen = set()
 
     for candidate in iter_wordlist("en"):
         word = candidate.lower()
-
         if (
             len(word) == WORD_LENGTH
             and word.isascii()
@@ -47,9 +37,11 @@ def load_common_words(limit=ANSWER_POOL_SIZE):
         ):
             seen.add(word)
             words.append(word)
-
         if len(words) >= limit:
             break
+
+    if len(words) < limit:
+        raise RuntimeError("Not enough five-letter words were found.")
 
     return words
 
@@ -57,29 +49,20 @@ def load_common_words(limit=ANSWER_POOL_SIZE):
 ANSWER_WORDS = load_common_words()
 
 
-# =========================================================
-# WORDLE LOGIC
-# =========================================================
-
 def evaluate_guess(answer, guess):
     result = ["absent"] * WORD_LENGTH
     remaining = {}
 
-    # Correct letter + correct position
     for i in range(WORD_LENGTH):
         if guess[i] == answer[i]:
             result[i] = "correct"
         else:
-            letter = answer[i]
-            remaining[letter] = remaining.get(letter, 0) + 1
+            remaining[answer[i]] = remaining.get(answer[i], 0) + 1
 
-    # Correct letter + wrong position
     for i in range(WORD_LENGTH):
         if result[i] == "correct":
             continue
-
         letter = guess[i]
-
         if remaining.get(letter, 0) > 0:
             result[i] = "present"
             remaining[letter] -= 1
@@ -87,610 +70,456 @@ def evaluate_guess(answer, guess):
     return result
 
 
-# =========================================================
-# FLASK
-# =========================================================
-
 app = Flask(__name__)
-
-app.secret_key = os.environ.get(
-    "SECRET_KEY",
-    "channy-wordle-secret-key"
-)
-
-games = {}
+app.secret_key = os.environ.get("SECRET_KEY", "channy-wordle-secret")
 
 
-def create_game(name):
-    game_id = secrets.token_hex(16)
+def reset_game():
+    session["answer"] = random.choice(ANSWER_WORDS)
+    session["attempt"] = 0
+    session["finished"] = False
 
-    games[game_id] = {
-        "name": name,
-        "answer": random.choice(ANSWER_WORDS),
-        "attempt": 0,
-        "finished": False,
-    }
-
-    session["game_id"] = game_id
-
-
-def get_game():
-    game_id = session.get("game_id")
-
-    if not game_id:
-        return None
-
-    return games.get(game_id)
-
-
-# =========================================================
-# WEB PAGE
-# =========================================================
 
 HTML = r"""
 <!DOCTYPE html>
-<html lang="en">
-
+<html lang="en" data-theme="light">
 <head>
-
 <meta charset="UTF-8">
-
-<meta
-    name="viewport"
-    content="width=device-width, initial-scale=1.0"
->
-
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Channy's Wordle</title>
 
 <style>
-
 :root {
-    --background: #ffffff;
+    color-scheme: light;
+    --bg: #ffffff;
+    --surface: #ffffff;
     --text: #000000;
-    --subtext: #787c7e;
-
+    --muted: #787c7e;
     --border: #d3d6da;
     --filled-border: #878a8c;
-
     --correct: #6aaa64;
     --present: #c9b458;
     --absent: #787c7e;
-
     --key: #d3d6da;
-    --key-hover: #b8babc;
-
-    --button: #000000;
+    --key-hover: #bfc2c5;
+    --key-text: #000000;
+    --button-bg: #000000;
+    --button-text: #ffffff;
     --button-hover: #333333;
+    --control-hover: #f2f2f2;
+    --overlay: rgba(0, 0, 0, 0.35);
+    --error: #b00020;
 }
 
-* {
-    box-sizing: border-box;
+:root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #121213;
+    --surface: #121213;
+    --text: #f8f8f8;
+    --muted: #a6a6a6;
+    --border: #3a3a3c;
+    --filled-border: #565758;
+    --correct: #538d4e;
+    --present: #b59f3b;
+    --absent: #3a3a3c;
+    --key: #818384;
+    --key-hover: #9a9a9c;
+    --key-text: #ffffff;
+    --button-bg: #f8f8f8;
+    --button-text: #121213;
+    --button-hover: #d8d8d8;
+    --control-hover: #2a2a2c;
+    --overlay: rgba(0, 0, 0, 0.68);
+    --error: #ff6b6b;
 }
+
+* { box-sizing: border-box; }
 
 body {
     margin: 0;
     min-height: 100dvh;
-
-    background: var(--background);
+    background: var(--bg);
     color: var(--text);
-
-    font-family:
-        "Helvetica Neue",
-        Arial,
-        sans-serif;
+    font-family: "Helvetica Neue", Arial, sans-serif;
 }
 
-button,
-input {
-    font: inherit;
+button, input { font: inherit; }
+.hidden { display: none !important; }
+
+.top-left {
+    position: fixed;
+    top: 14px;
+    left: 14px;
+    z-index: 10001;
+    display: flex;
+    gap: 8px;
 }
 
+.icon-button,
+.stats-button {
+    height: 42px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    cursor: pointer;
+    font-weight: 700;
+}
 
-/* =========================
-   MAIN
-   ========================= */
+.icon-button {
+    width: 42px;
+    padding: 0;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    font-size: 1.2rem;
+}
+
+.stats-button {
+    position: fixed;
+    top: 14px;
+    right: 14px;
+    z-index: 10001;
+    padding: 0 14px;
+    border-radius: 6px;
+}
+
+.icon-button:hover,
+.stats-button:hover {
+    background: var(--control-hover);
+}
+
+.icon-button:active,
+.stats-button:active {
+    transform: scale(0.95);
+}
 
 .game {
     width: min(96vw, 520px);
     min-height: 100dvh;
-
     margin: 0 auto;
     padding-bottom: 14px;
-
     display: flex;
     flex-direction: column;
     align-items: center;
 }
 
-
-/* =========================
-   HEADER
-   ========================= */
-
 .header {
     width: 100%;
-
-    padding: 12px 10px 10px;
-
-    border-bottom:
-        1px solid
-        var(--border);
-
+    padding: 12px 70px 10px;
+    border-bottom: 1px solid var(--border);
     text-align: center;
 }
 
 .title {
     margin: 0;
-
-    font-family:
-        "Arial Black",
-        "Helvetica Neue",
-        Arial,
-        sans-serif;
-
-    font-size:
-        clamp(
-            1.65rem,
-            6vw,
-            2.1rem
-        );
-
+    font-family: "Arial Black", "Helvetica Neue", Arial, sans-serif;
+    font-size: clamp(1.55rem, 6vw, 2.05rem);
     font-weight: 900;
-
     letter-spacing: 0.08em;
 }
 
 .subtitle {
     margin: 5px 0 0;
-
-    color: var(--subtext);
-
-    font-size:
-        clamp(
-            0.76rem,
-            2.8vw,
-            0.9rem
-        );
+    color: var(--muted);
+    font-size: clamp(0.76rem, 2.8vw, 0.9rem);
 }
-
-
-/* =========================
-   BOARD
-   ========================= */
 
 .board-area {
     flex: 1;
-
     width: 100%;
-
+    padding: 12px 0 7px;
     display: flex;
     align-items: center;
     justify-content: center;
-
-    padding: 12px 0 7px;
 }
 
 .board {
     width: min(68vw, 300px);
-
     display: grid;
-
-    grid-template-columns:
-        repeat(5, 1fr);
-
+    grid-template-columns: repeat(5, 1fr);
     gap: 5px;
 }
 
 .tile {
     aspect-ratio: 1;
-
     display: grid;
     place-items: center;
-
-    border:
-        2px solid
-        var(--border);
-
-    background: white;
-    color: black;
-
-    font-family:
-        "Arial Black",
-        Arial,
-        sans-serif;
-
-    font-size:
-        clamp(
-            1.35rem,
-            6vw,
-            2rem
-        );
-
+    border: 2px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font-family: "Arial Black", Arial, sans-serif;
+    font-size: clamp(1.35rem, 6vw, 2rem);
     font-weight: 900;
-
     user-select: none;
 }
 
-.tile.filled {
-    border-color:
-        var(--filled-border);
-}
-
-.tile.correct {
-    background:
-        var(--correct);
-
-    border-color:
-        var(--correct);
-
-    color: white;
-}
-
-.tile.present {
-    background:
-        var(--present);
-
-    border-color:
-        var(--present);
-
-    color: white;
-}
-
-.tile.absent {
-    background:
-        var(--absent);
-
-    border-color:
-        var(--absent);
-
-    color: white;
-}
-
-
-/* =========================
-   MESSAGE
-   ========================= */
+.tile.filled { border-color: var(--filled-border); }
+.tile.correct { background: var(--correct); border-color: var(--correct); color: #fff; }
+.tile.present { background: var(--present); border-color: var(--present); color: #fff; }
+.tile.absent { background: var(--absent); border-color: var(--absent); color: #fff; }
 
 .status {
     width: 100%;
     min-height: 56px;
-
     margin: 0;
     padding: 4px 10px;
-
     display: grid;
     place-items: center;
-
     text-align: center;
     white-space: pre-line;
-
-    font-size:
-        clamp(
-            0.9rem,
-            3vw,
-            1rem
-        );
-
+    font-size: clamp(0.9rem, 3vw, 1rem);
     font-weight: 600;
 }
 
 .status.big {
-    font-size:
-        clamp(
-            1.1rem,
-            4.5vw,
-            1.45rem
-        );
-
+    font-size: clamp(1.1rem, 4.5vw, 1.45rem);
     font-weight: 800;
 }
 
-
-/* =========================
-   KEYBOARD
-   ========================= */
-
 .keyboard {
     width: 100%;
-
     padding: 0 7px;
-
     display: flex;
     flex-direction: column;
-
     gap: 6px;
 }
 
 .keyboard-row {
     display: flex;
     justify-content: center;
-
     gap: 5px;
 }
 
-.keyboard-row.middle {
-    padding: 0 5%;
-}
+.keyboard-row.middle { padding: 0 5%; }
 
 .key {
     flex: 1;
-
     min-width: 0;
-
-    height:
-        clamp(
-            45px,
-            10vw,
-            56px
-        );
-
+    height: clamp(45px, 10vw, 56px);
     padding: 0;
-
     border: 0;
     border-radius: 4px;
-
     background: var(--key);
-    color: black;
-
-    font-size:
-        clamp(
-            0.78rem,
-            3vw,
-            0.95rem
-        );
-
+    color: var(--key-text);
+    font-size: clamp(0.78rem, 3vw, 0.95rem);
     font-weight: 700;
+    cursor: pointer;
+    user-select: none;
+}
 
+.key:hover { background: var(--key-hover); }
+.key:active { transform: scale(0.95); }
+.key.wide { flex: 1.55; font-size: clamp(0.62rem, 2.4vw, 0.76rem); }
+.key.correct { background: var(--correct); color: #fff; }
+.key.present { background: var(--present); color: #fff; }
+.key.absent { background: var(--absent); color: #fff; }
+
+.again,
+.play {
+    border: 0;
+    border-radius: 4px;
+    background: var(--button-bg);
+    color: var(--button-text);
+    font-weight: 700;
     cursor: pointer;
 }
-
-.key:hover {
-    background:
-        var(--key-hover);
-}
-
-.key:active {
-    transform:
-        scale(0.95);
-}
-
-.key.wide {
-    flex: 1.55;
-
-    font-size:
-        clamp(
-            0.62rem,
-            2.4vw,
-            0.76rem
-        );
-}
-
-.key.correct {
-    background:
-        var(--correct);
-
-    color: white;
-}
-
-.key.present {
-    background:
-        var(--present);
-
-    color: white;
-}
-
-.key.absent {
-    background:
-        var(--absent);
-
-    color: white;
-}
-
-
-/* =========================
-   AGAIN
-   ========================= */
 
 .again {
     margin-top: 12px;
-
     padding: 9px 28px;
-
-    border: 0;
-    border-radius: 4px;
-
-    background: var(--button);
-    color: white;
-
-    font-weight: 700;
-
-    cursor: pointer;
 }
 
-.again:hover {
-    background:
-        var(--button-hover);
+.play {
+    width: 100%;
+    padding: 11px;
 }
 
-
-/* =========================
-   NAME SCREEN
-   ========================= */
+.again:hover,
+.play:hover {
+    background: var(--button-hover);
+}
 
 .name-screen {
     position: fixed;
     inset: 0;
-
-    z-index: 100;
-
+    z-index: 9000;
     display: grid;
     place-items: center;
-
     padding: 20px;
-
-    background: white;
-}
-
-.name-screen.hidden {
-    display: none;
+    background: var(--bg);
 }
 
 .name-box {
     width: min(90vw, 360px);
-
     padding: 30px 26px;
-
-    border:
-        1px solid
-        var(--border);
-
-    background: white;
-
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
     text-align: center;
 }
 
 .name-title {
     margin: 0 0 7px;
-
-    font-family:
-        "Arial Black",
-        Arial,
-        sans-serif;
-
+    font-family: "Arial Black", Arial, sans-serif;
     font-size: 1.6rem;
     font-weight: 900;
 }
 
 .name-description {
     margin: 0 0 18px;
-
-    color: var(--subtext);
-
+    color: var(--muted);
     font-size: 0.85rem;
 }
 
 .name-input {
     width: 100%;
-
     padding: 11px;
-
-    border:
-        2px solid
-        var(--border);
-
+    border: 2px solid var(--border);
     border-radius: 0;
-
     outline: 0;
-
-    background: white;
-    color: black;
-
+    background: var(--surface);
+    color: var(--text);
     font-size: 1rem;
     font-weight: 600;
-
     text-align: center;
 }
 
-.name-input:focus {
-    border-color:
-        var(--filled-border);
-}
+.name-input:focus { border-color: var(--filled-border); }
+.name-input::placeholder { color: var(--muted); }
 
 .name-error {
     min-height: 21px;
-
     margin: 6px 0;
-
-    color: #b00020;
-
+    color: var(--error);
     font-size: 0.78rem;
     font-weight: 600;
 }
 
-.play {
-    width: 100%;
+.stats-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 20000;
+    display: grid;
+    place-items: center;
+    padding: 20px;
+    background: var(--overlay);
+}
 
-    padding: 11px;
+.stats-panel {
+    width: min(96vw, 800px);
+    max-height: 78dvh;
+    overflow: auto;
+    padding: 22px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+}
 
-    border: 0;
-    border-radius: 4px;
+.stats-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 14px;
+}
 
-    background: var(--button);
-    color: white;
+.stats-title {
+    margin: 0;
+    font-size: 1.35rem;
+    font-weight: 900;
+}
 
-    font-weight: 700;
-
+.close-button {
+    width: 36px;
+    height: 36px;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    background: var(--surface);
+    color: var(--text);
     cursor: pointer;
+    font-size: 1.15rem;
 }
 
-.play:hover {
-    background:
-        var(--button-hover);
+.stats-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
 }
 
+.stats-table th,
+.stats-table td {
+    padding: 10px 8px;
+    border-bottom: 1px solid var(--border);
+    text-align: center;
+}
 
-/* =========================
-   SMALL SCREEN
-   ========================= */
+.stats-table th {
+    color: var(--muted);
+    font-size: 0.76rem;
+    text-transform: uppercase;
+}
+
+.empty-history {
+    margin: 24px 0 8px;
+    color: var(--muted);
+    text-align: center;
+}
+
+@media (max-width: 640px) {
+    .header { padding-left: 70px; padding-right: 70px; }
+    .stats-label { display: none; }
+    .stats-panel { padding: 16px 10px; }
+    .stats-table { font-size: 0.75rem; }
+    .stats-table th, .stats-table td { padding: 8px 3px; }
+}
 
 @media (max-height: 740px) {
-
-    .header {
-        padding:
-            7px
-            10px;
-    }
-
-    .board-area {
-        padding:
-            6px
-            0
-            4px;
-    }
-
-    .board {
-        width:
-            min(
-                53vh,
-                275px
-            );
-    }
-
-    .status {
-        min-height: 42px;
-    }
-
-    .key {
-        height: 40px;
-    }
-
-    .again {
-        margin-top: 7px;
-    }
+    .header { padding-top: 7px; padding-bottom: 7px; }
+    .board-area { padding: 6px 0 4px; }
+    .board { width: min(53vh, 275px); }
+    .status { min-height: 42px; }
+    .key { height: 40px; }
+    .again { margin-top: 7px; }
 }
-
 </style>
-
 </head>
-
 
 <body>
 
+<div class="top-left">
+    <button
+        id="themeToggle"
+        class="icon-button"
+        type="button"
+        title="Switch to dark mode"
+        aria-label="Switch to dark mode"
+    >
+        ☾
+    </button>
 
-<!-- =========================
-     NAME SCREEN
-     ========================= -->
+    <button
+        id="backButton"
+        class="icon-button hidden"
+        type="button"
+        title="Back to name"
+        aria-label="Back to name"
+    >
+        ←
+    </button>
+</div>
 
-<div
-    id="nameScreen"
-    class="name-screen"
+<button
+    id="statsButton"
+    class="stats-button"
+    type="button"
+    title="Game statistics"
 >
+    ▦ <span class="stats-label">Stats</span>
+</button>
 
+<div id="nameScreen" class="name-screen">
     <div class="name-box">
-
-        <h2 class="name-title">
-            Type your name
-        </h2>
+        <h2 class="name-title">Type your name</h2>
 
         <p class="name-description">
             Your name may appear during the game.
@@ -705,10 +534,7 @@ input {
             autocomplete="name"
         >
 
-        <p
-            id="nameError"
-            class="name-error"
-        ></p>
+        <p id="nameError" class="name-error"></p>
 
         <button
             id="playButton"
@@ -717,54 +543,24 @@ input {
         >
             PLAY
         </button>
-
     </div>
-
 </div>
 
-
-<!-- =========================
-     GAME
-     ========================= -->
-
 <main class="game">
-
     <header class="header">
-
-        <h1 class="title">
-            CHANNY'S WORDLE
-        </h1>
-
-        <p class="subtitle">
-            Guess the five-letter word in six tries.
-        </p>
-
+        <h1 class="title">CHANNY'S WORDLE</h1>
+        <p class="subtitle">Guess the five-letter word in six tries.</p>
     </header>
 
-
     <div class="board-area">
-
-        <div
-            id="board"
-            class="board"
-        ></div>
-
+        <div id="board" class="board"></div>
     </div>
 
-
-    <p
-        id="status"
-        class="status"
-    >
+    <p id="status" class="status" aria-live="polite">
         Take your first guess.
     </p>
 
-
-    <div
-        id="keyboard"
-        class="keyboard"
-    ></div>
-
+    <div id="keyboard" class="keyboard"></div>
 
     <button
         id="againButton"
@@ -773,57 +569,51 @@ input {
     >
         again?
     </button>
-
 </main>
 
+<div id="statsOverlay" class="stats-overlay hidden">
+    <section class="stats-panel">
+        <div class="stats-header">
+            <h2 class="stats-title">Game History</h2>
+
+            <button
+                id="closeStatsButton"
+                class="close-button"
+                type="button"
+                aria-label="Close statistics"
+            >
+                ×
+            </button>
+        </div>
+
+        <div id="statsContent"></div>
+    </section>
+</div>
 
 <script>
-
 const WORD_LENGTH = 5;
 const MAX_ATTEMPTS = 6;
 
-let currentRow = 0;
-let currentGuess = [];
-
-let gameOver = false;
-let submitting = false;
-
-
-const board =
-    document.getElementById("board");
-
-const keyboard =
-    document.getElementById("keyboard");
-
-const statusLabel =
-    document.getElementById("status");
-
-const nameScreen =
-    document.getElementById("nameScreen");
-
-const nameInput =
-    document.getElementById("nameInput");
-
-const nameError =
-    document.getElementById("nameError");
-
-const playButton =
-    document.getElementById("playButton");
-
-const againButton =
-    document.getElementById("againButton");
-
+const board = document.getElementById("board");
+const keyboard = document.getElementById("keyboard");
+const statusLabel = document.getElementById("status");
+const nameScreen = document.getElementById("nameScreen");
+const nameInput = document.getElementById("nameInput");
+const nameError = document.getElementById("nameError");
+const themeToggle = document.getElementById("themeToggle");
+const backButton = document.getElementById("backButton");
+const statsButton = document.getElementById("statsButton");
+const playButton = document.getElementById("playButton");
+const againButton = document.getElementById("againButton");
+const statsOverlay = document.getElementById("statsOverlay");
+const statsContent = document.getElementById("statsContent");
+const closeStatsButton = document.getElementById("closeStatsButton");
 
 const keyboardRows = [
     [..."QWERTYUIOP"],
     [..."ASDFGHJKL"],
-    [
-        "ENTER",
-        ..."ZXCVBNM",
-        "⌫"
-    ]
+    ["ENTER", ..."ZXCVBNM", "⌫"]
 ];
-
 
 const statePriority = {
     unused: 0,
@@ -832,117 +622,141 @@ const statePriority = {
     correct: 3
 };
 
+let currentRow = 0;
+let currentGuess = [];
+let submittedAttempts = 0;
+let gameOver = false;
+let submitting = false;
+let gameLogged = false;
+let gameStartedAt = null;
 
-/* =========================
-   BUILD BOARD
-   ========================= */
+let playerName = "";
+let gameHistory = [];
+
+
+function normalizePlayerName(name) {
+    return name.trim().toLowerCase();
+}
+
+
+function getHistoryKey(name) {
+    return "channyWordleHistory_" + normalizePlayerName(name);
+}
+
+
+function loadHistoryForPlayer(name) {
+    if (!name) {
+        return [];
+    }
+
+    try {
+        const saved = sessionStorage.getItem(getHistoryKey(name));
+        return saved ? JSON.parse(saved) : [];
+    } catch {
+        return [];
+    }
+}
+
+
+function saveHistory() {
+    if (!playerName) {
+        return;
+    }
+
+    sessionStorage.setItem(
+        getHistoryKey(playerName),
+        JSON.stringify(gameHistory)
+    );
+}
+
+
+function setTheme(theme) {
+    const dark = theme === "dark";
+
+    document.documentElement.setAttribute(
+        "data-theme",
+        dark ? "dark" : "light"
+    );
+
+    themeToggle.textContent = dark ? "☀" : "☾";
+
+    const label = dark
+        ? "Switch to light mode"
+        : "Switch to dark mode";
+
+    themeToggle.title = label;
+    themeToggle.setAttribute("aria-label", label);
+
+    localStorage.setItem(
+        "channyWordleTheme",
+        dark ? "dark" : "light"
+    );
+}
+
+
+function toggleTheme() {
+    const current = document.documentElement.getAttribute("data-theme");
+    setTheme(current === "dark" ? "light" : "dark");
+}
+
 
 function buildBoard() {
-
     board.innerHTML = "";
 
-    for (
-        let i = 0;
-        i < WORD_LENGTH * MAX_ATTEMPTS;
-        i++
-    ) {
-
-        const tile =
-            document.createElement("div");
-
+    for (let i = 0; i < WORD_LENGTH * MAX_ATTEMPTS; i++) {
+        const tile = document.createElement("div");
         tile.className = "tile";
-
         board.appendChild(tile);
     }
 }
 
 
-/* =========================
-   BUILD KEYBOARD
-   ========================= */
-
 function buildKeyboard() {
-
     keyboard.innerHTML = "";
 
-    keyboardRows.forEach(
-        (keys, rowIndex) => {
+    keyboardRows.forEach((keys, rowIndex) => {
+        const row = document.createElement("div");
+        row.className = "keyboard-row";
 
-            const row =
-                document.createElement("div");
+        if (rowIndex === 1) {
+            row.classList.add("middle");
+        }
 
-            row.className =
-                "keyboard-row";
+        keys.forEach(key => {
+            const button = document.createElement("button");
 
-            if (rowIndex === 1) {
-                row.classList.add(
-                    "middle"
-                );
+            button.type = "button";
+            button.className = "key";
+            button.textContent = key;
+            button.dataset.key = key;
+            button.dataset.state = "unused";
+
+            if (key === "ENTER" || key === "⌫") {
+                button.classList.add("wide");
             }
 
-            keys.forEach(key => {
+            button.addEventListener(
+                "click",
+                () => handleKey(key)
+            );
 
-                const button =
-                    document.createElement(
-                        "button"
-                    );
+            row.appendChild(button);
+        });
 
-                button.type = "button";
-
-                button.className = "key";
-
-                button.textContent = key;
-
-                button.dataset.key = key;
-
-                button.dataset.state =
-                    "unused";
-
-                if (
-                    key === "ENTER"
-                    ||
-                    key === "⌫"
-                ) {
-
-                    button.classList.add(
-                        "wide"
-                    );
-                }
-
-                button.addEventListener(
-                    "click",
-                    () => handleKey(key)
-                );
-
-                row.appendChild(button);
-            });
-
-            keyboard.appendChild(row);
-        }
-    );
+        keyboard.appendChild(row);
+    });
 }
 
 
-/* =========================
-   HELPERS
-   ========================= */
-
 function tileAt(row, column) {
-
     return board.children[
-        row * WORD_LENGTH
-        + column
+        row * WORD_LENGTH + column
     ];
 }
 
 
-function setStatus(
-    message,
-    emphasized = false
-) {
-
-    statusLabel.textContent =
-        message;
+function setStatus(message, emphasized = false) {
+    statusLabel.textContent = message;
 
     statusLabel.classList.toggle(
         "big",
@@ -952,66 +766,53 @@ function setStatus(
 
 
 function resetUI() {
-
     currentRow = 0;
     currentGuess = [];
-
+    submittedAttempts = 0;
     gameOver = false;
     submitting = false;
+    gameLogged = false;
+    gameStartedAt = Date.now();
 
     buildBoard();
     buildKeyboard();
 
-    setStatus(
-        "Take your first guess.",
-        false
-    );
+    setStatus("Take your first guess.");
+
+    backButton.classList.remove("hidden");
 }
 
 
-/* =========================
-   LETTERS
-   ========================= */
-
 function addLetter(letter) {
-
     if (
         gameOver
         ||
-        currentGuess.length
-        >= WORD_LENGTH
+        currentGuess.length >= WORD_LENGTH
     ) {
         return;
     }
 
     currentGuess.push(letter);
 
-    const tile =
-        tileAt(
-            currentRow,
-            currentGuess.length - 1
-        );
+    const tile = tileAt(
+        currentRow,
+        currentGuess.length - 1
+    );
 
     tile.textContent = letter;
-
-    tile.classList.add(
-        "filled"
-    );
+    tile.classList.add("filled");
 
     if (
         currentRow === 0
         &&
-        statusLabel.textContent
-        === "Take your first guess."
+        statusLabel.textContent === "Take your first guess."
     ) {
-
         setStatus("");
     }
 }
 
 
 function removeLetter() {
-
     if (
         gameOver
         ||
@@ -1020,103 +821,246 @@ function removeLetter() {
         return;
     }
 
-    const tile =
-        tileAt(
-            currentRow,
-            currentGuess.length - 1
-        );
+    const tile = tileAt(
+        currentRow,
+        currentGuess.length - 1
+    );
 
     currentGuess.pop();
 
     tile.textContent = "";
-
-    tile.classList.remove(
-        "filled"
-    );
+    tile.classList.remove("filled");
 }
 
-
-/* =========================
-   COLORS
-   ========================= */
 
 function applyResult(result) {
+    result.forEach((state, column) => {
+        const tile = tileAt(
+            currentRow,
+            column
+        );
 
-    result.forEach(
-        (state, column) => {
-
-            const tile =
-                tileAt(
-                    currentRow,
-                    column
-                );
-
-            tile.classList.remove(
-                "filled"
-            );
-
-            tile.classList.add(
-                state
-            );
-        }
-    );
+        tile.classList.remove("filled");
+        tile.classList.add(state);
+    });
 }
 
 
-function updateKeyboard(
-    letters,
-    result
-) {
+function updateKeyboard(letters, result) {
+    letters.forEach((letter, index) => {
+        const button = keyboard.querySelector(
+            `[data-key="${letter}"]`
+        );
 
-    letters.forEach(
-        (letter, index) => {
-
-            const button =
-                keyboard.querySelector(
-                    `[data-key="${letter}"]`
-                );
-
-            if (!button) {
-                return;
-            }
-
-            const oldState =
-                button.dataset.state;
-
-            const newState =
-                result[index];
-
-            if (
-                statePriority[newState]
-                <=
-                statePriority[oldState]
-            ) {
-                return;
-            }
-
-            button.classList.remove(
-                "absent",
-                "present",
-                "correct"
-            );
-
-            button.classList.add(
-                newState
-            );
-
-            button.dataset.state =
-                newState;
+        if (!button) {
+            return;
         }
-    );
+
+        const oldState = button.dataset.state;
+        const newState = result[index];
+
+        if (
+            statePriority[newState]
+            <=
+            statePriority[oldState]
+        ) {
+            return;
+        }
+
+        button.classList.remove(
+            "absent",
+            "present",
+            "correct"
+        );
+
+        button.classList.add(newState);
+        button.dataset.state = newState;
+    });
 }
 
 
-/* =========================
-   SUBMIT GUESS
-   ========================= */
+async function postJSON(url, payload = null) {
+    const options = {
+        method: "POST"
+    };
+
+    if (payload !== null) {
+        options.headers = {
+            "Content-Type": "application/json"
+        };
+
+        options.body = JSON.stringify(payload);
+    }
+
+    const response = await fetch(
+        url,
+        options
+    );
+
+    const data = await response.json();
+
+    if (!response.ok) {
+        throw new Error(
+            data.error
+            ||
+            "Something went wrong."
+        );
+    }
+
+    return data;
+}
+
+
+function formatDuration(milliseconds) {
+    const totalSeconds = Math.max(
+        0,
+        Math.round(milliseconds / 1000)
+    );
+
+    const minutes = Math.floor(
+        totalSeconds / 60
+    );
+
+    const seconds = totalSeconds % 60;
+
+    if (minutes === 0) {
+        return `${seconds}s`;
+    }
+
+    return `${minutes}m ${seconds}s`;
+}
+
+
+function addGameLog(won, attempts) {
+    if (
+        gameLogged
+        ||
+        gameStartedAt === null
+        ||
+        !playerName
+    ) {
+        return;
+    }
+
+    const started = new Date(gameStartedAt);
+
+    gameHistory.push({
+        userName: playerName,
+
+        started: started.toLocaleTimeString(
+            [],
+            {
+                hour: "2-digit",
+                minute: "2-digit"
+            }
+        ),
+
+        duration: formatDuration(
+            Date.now() - gameStartedAt
+        ),
+
+        won: won,
+
+        attempts: attempts
+    });
+
+    gameLogged = true;
+
+    saveHistory();
+}
+
+
+function logUnfinishedGameIfNeeded() {
+    if (
+        !gameLogged
+        &&
+        gameStartedAt !== null
+        &&
+        submittedAttempts > 0
+    ) {
+        addGameLog(
+            false,
+            submittedAttempts
+        );
+    }
+}
+
+
+function escapeHTML(value) {
+    const element = document.createElement("div");
+    element.textContent = String(value);
+    return element.innerHTML;
+}
+
+
+function renderStats() {
+    if (!playerName) {
+        statsContent.innerHTML =
+            '<p class="empty-history">Enter your name first.</p>';
+        return;
+    }
+
+    if (gameHistory.length === 0) {
+        statsContent.innerHTML =
+            `<p class="empty-history">
+                No games yet for ${escapeHTML(playerName)}.
+            </p>`;
+        return;
+    }
+
+    const rows = gameHistory.map(
+        (game, index) => {
+
+            const result = game.won
+                ? "✅ Correct"
+                : "❌ Not solved";
+
+            return `
+                <tr>
+                    <td>${escapeHTML(game.userName)}</td>
+                    <td>${index + 1}</td>
+                    <td>${escapeHTML(game.started)}</td>
+                    <td>${escapeHTML(game.duration)}</td>
+                    <td>${result}</td>
+                    <td>${game.attempts}</td>
+                </tr>
+            `;
+        }
+    ).join("");
+
+    statsContent.innerHTML = `
+        <table class="stats-table">
+            <thead>
+                <tr>
+                    <th>User Name</th>
+                    <th>Game</th>
+                    <th>Start Time</th>
+                    <th>Play Time</th>
+                    <th>Result</th>
+                    <th>Attempts</th>
+                </tr>
+            </thead>
+
+            <tbody>
+                ${rows}
+            </tbody>
+        </table>
+    `;
+}
+
+
+function openStats() {
+    renderStats();
+    statsOverlay.classList.remove("hidden");
+}
+
+
+function closeStats() {
+    statsOverlay.classList.add("hidden");
+}
+
 
 async function submitGuess() {
-
     if (
         gameOver
         ||
@@ -1129,7 +1073,6 @@ async function submitGuess() {
         currentGuess.length
         !== WORD_LENGTH
     ) {
-
         setStatus(
             "Five letters, please.",
             true
@@ -1141,44 +1084,16 @@ async function submitGuess() {
     submitting = true;
 
     try {
-
-        const response =
-            await fetch(
-                "/guess",
-                {
-                    method: "POST",
-
-                    headers: {
-                        "Content-Type":
-                            "application/json"
-                    },
-
-                    body:
-                        JSON.stringify({
-                            guess:
-                                currentGuess.join("")
-                        })
-                }
-            );
-
-        const data =
-            await response.json();
-
-        if (!response.ok) {
-
-            setStatus(
-                data.error
-                ||
-                "Something went wrong.",
-                true
-            );
-
-            return;
-        }
-
-        applyResult(
-            data.result
+        const data = await postJSON(
+            "/guess",
+            {
+                guess: currentGuess.join("")
+            }
         );
+
+        submittedAttempts = data.attempt;
+
+        applyResult(data.result);
 
         updateKeyboard(
             currentGuess,
@@ -1190,41 +1105,36 @@ async function submitGuess() {
             true
         );
 
-        gameOver =
-            data.game_over;
+        gameOver = data.game_over;
 
-        if (!gameOver) {
+        if (gameOver) {
+            addGameLog(
+                data.won,
+                data.attempt
+            );
 
-            currentRow += 1;
-
-            currentGuess = [];
+            return;
         }
 
-    } catch (error) {
+        currentRow += 1;
+        currentGuess = [];
 
+    } catch (error) {
         setStatus(
-            "Server error.",
+            error.message,
             true
         );
 
     } finally {
-
         submitting = false;
     }
 }
 
 
-/* =========================
-   NAME
-   ========================= */
-
 async function submitName() {
-
-    const name =
-        nameInput.value.trim();
+    const name = nameInput.value.trim();
 
     if (!name) {
-
         nameError.textContent =
             "Please enter your name.";
 
@@ -1234,37 +1144,19 @@ async function submitName() {
     }
 
     try {
+        await postJSON(
+            "/start",
+            {
+                name: name
+            }
+        );
 
-        const response =
-            await fetch(
-                "/start",
-                {
-                    method: "POST",
+        playerName = name;
 
-                    headers: {
-                        "Content-Type":
-                            "application/json"
-                    },
-
-                    body:
-                        JSON.stringify({
-                            name: name
-                        })
-                }
+        gameHistory =
+            loadHistoryForPlayer(
+                playerName
             );
-
-        const data =
-            await response.json();
-
-        if (!response.ok) {
-
-            nameError.textContent =
-                data.error
-                ||
-                "Something went wrong.";
-
-            return;
-        }
 
         nameError.textContent = "";
 
@@ -1275,94 +1167,104 @@ async function submitName() {
         resetUI();
 
     } catch (error) {
-
         nameError.textContent =
-            "Server error.";
+            error.message;
     }
 }
 
 
-/* =========================
-   RESTART
-   ========================= */
-
 async function restartGame() {
-
     try {
+        logUnfinishedGameIfNeeded();
 
-        const response =
-            await fetch(
-                "/restart",
-                {
-                    method: "POST"
-                }
-            );
-
-        const data =
-            await response.json();
-
-        if (!response.ok) {
-
-            setStatus(
-                data.error
-                ||
-                "Something went wrong.",
-                true
-            );
-
-            return;
-        }
+        await postJSON(
+            "/restart"
+        );
 
         resetUI();
 
     } catch (error) {
-
         setStatus(
-            "Server error.",
+            error.message,
             true
         );
     }
 }
 
 
-/* =========================
-   INPUT HANDLER
-   ========================= */
+async function backToName() {
+    logUnfinishedGameIfNeeded();
+
+    try {
+        await postJSON(
+            "/leave"
+        );
+    } catch {
+        // Return to name screen anyway.
+    }
+
+    nameInput.value = playerName;
+
+    nameScreen.classList.remove(
+        "hidden"
+    );
+
+    backButton.classList.add(
+        "hidden"
+    );
+
+    nameInput.focus();
+}
+
 
 function handleKey(key) {
-
     if (
-        !nameScreen
-            .classList
-            .contains("hidden")
+        !nameScreen.classList.contains(
+            "hidden"
+        )
     ) {
         return;
     }
 
     if (key === "ENTER") {
-
         submitGuess();
-
         return;
     }
 
     if (key === "⌫") {
-
         removeLetter();
-
         return;
     }
 
     if (/^[A-Z]$/.test(key)) {
-
         addLetter(key);
     }
 }
 
 
-/* =========================
-   BUTTONS
-   ========================= */
+themeToggle.addEventListener(
+    "click",
+    toggleTheme
+);
+
+
+backButton.addEventListener(
+    "click",
+    backToName
+);
+
+
+statsButton.addEventListener(
+    "click",
+    openStats
+);
+
+
+closeStatsButton.addEventListener(
+    "click",
+    closeStats
+);
+
 
 playButton.addEventListener(
     "click",
@@ -1376,37 +1278,77 @@ againButton.addEventListener(
 );
 
 
-/* =========================
-   PHYSICAL KEYBOARD
-   ========================= */
+statsOverlay.addEventListener(
+    "click",
+    event => {
+        if (
+            event.target
+            ===
+            statsOverlay
+        ) {
+            closeStats();
+        }
+    }
+);
+
 
 document.addEventListener(
     "keydown",
     event => {
 
         if (
-            !nameScreen
-                .classList
-                .contains("hidden")
+            event.key === "Escape"
+            &&
+            !statsOverlay.classList.contains(
+                "hidden"
+            )
         ) {
+            closeStats();
+            return;
+        }
 
-            if (event.key === "Enter") {
+        if (
+            !statsOverlay.classList.contains(
+                "hidden"
+            )
+        ) {
+            return;
+        }
+
+        if (
+            !nameScreen.classList.contains(
+                "hidden"
+            )
+        ) {
+            if (
+                event.key === "Enter"
+            ) {
                 submitName();
             }
 
             return;
         }
 
-        if (event.key === "Enter") {
+        if (
+            event.key === "Enter"
+        ) {
+            event.preventDefault();
 
-            handleKey("ENTER");
+            handleKey(
+                "ENTER"
+            );
 
             return;
         }
 
-        if (event.key === "Backspace") {
+        if (
+            event.key === "Backspace"
+        ) {
+            event.preventDefault();
 
-            handleKey("⌫");
+            handleKey(
+                "⌫"
+            );
 
             return;
         }
@@ -1414,19 +1356,29 @@ document.addEventListener(
         const key =
             event.key.toUpperCase();
 
-        if (/^[A-Z]$/.test(key)) {
-
+        if (
+            /^[A-Z]$/.test(
+                key
+            )
+        ) {
             handleKey(key);
         }
     }
 );
 
 
-/* =========================
-   START PAGE
-   ========================= */
+const savedTheme =
+    localStorage.getItem(
+        "channyWordleTheme"
+    )
+    ||
+    "light";
+
+
+setTheme(savedTheme);
 
 buildBoard();
+
 buildKeyboard();
 
 nameInput.focus();
@@ -1438,10 +1390,6 @@ nameInput.focus();
 """
 
 
-# =========================================================
-# ROUTES
-# =========================================================
-
 @app.get("/")
 def home():
     return render_template_string(HTML)
@@ -1449,12 +1397,8 @@ def home():
 
 @app.post("/start")
 def start():
-
     data = request.get_json(silent=True) or {}
-
-    name = str(
-        data.get("name", "")
-    ).strip()
+    name = str(data.get("name", "")).strip()
 
     if not name:
         return jsonify(
@@ -1466,7 +1410,10 @@ def start():
             error="Please use 16 characters or fewer."
         ), 400
 
-    create_game(name)
+    session.clear()
+    session["name"] = name
+
+    reset_game()
 
     return jsonify(
         success=True
@@ -1475,15 +1422,16 @@ def start():
 
 @app.post("/guess")
 def guess():
-
-    game = get_game()
-
-    if not game:
+    if (
+        "name" not in session
+        or
+        "answer" not in session
+    ):
         return jsonify(
             error="Please start the game first."
         ), 400
 
-    if game["finished"]:
+    if session.get("finished"):
         return jsonify(
             error="The game is already over."
         ), 400
@@ -1496,97 +1444,87 @@ def guess():
 
     if (
         len(entered) != WORD_LENGTH
-        or
-        not entered.isascii()
-        or
-        not entered.isalpha()
+        or not entered.isascii()
+        or not entered.isalpha()
     ):
-
         return jsonify(
             error="Five English letters, please."
         ), 400
 
+    answer = session["answer"]
+
     result = evaluate_guess(
-        game["answer"],
+        answer,
         entered
     )
 
-    game["attempt"] += 1
+    attempt = session["attempt"] + 1
+    session["attempt"] = attempt
 
-
-    # Correct answer
-    if entered == game["answer"]:
-
-        game["finished"] = True
+    if entered == answer:
+        session["finished"] = True
 
         return jsonify(
             result=result,
             message=WIN_MESSAGE,
-            game_over=True
+            game_over=True,
+            won=True,
+            attempt=attempt
         )
 
-
-    # Wrong answer
     message = WRONG_MESSAGES[
-        game["attempt"] - 1
+        attempt - 1
     ].format(
-        name=game["name"]
+        name=session["name"]
     )
 
-
-    # Sixth wrong answer
-    if game["attempt"] >= MAX_ATTEMPTS:
-
-        game["finished"] = True
+    if attempt >= MAX_ATTEMPTS:
+        session["finished"] = True
 
         message += (
             "\nThe word was "
-            f"{game['answer'].upper()}."
+            f"{answer.upper()}."
         )
-
 
     return jsonify(
         result=result,
         message=message,
-        game_over=game["finished"]
+        game_over=session["finished"],
+        won=False,
+        attempt=attempt
     )
 
 
 @app.post("/restart")
 def restart():
-
-    game = get_game()
-
-    if not game:
+    if "name" not in session:
         return jsonify(
             error="Please enter your name first."
         ), 400
 
-    game["answer"] = random.choice(
-        ANSWER_WORDS
-    )
-
-    game["attempt"] = 0
-    game["finished"] = False
+    reset_game()
 
     return jsonify(
         success=True
     )
 
 
-# =========================================================
-# LOCAL RUN
-# =========================================================
+@app.post("/leave")
+def leave():
+    session.clear()
+
+    return jsonify(
+        success=True
+    )
+
 
 def open_browser():
-
     webbrowser.open(
         "http://127.0.0.1:5000"
     )
 
 
 if __name__ == "__main__":
-
     threading.Timer(
         1.0,
         open_browser
