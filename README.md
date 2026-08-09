@@ -5,7 +5,7 @@ A colorful Wordle-style web game built with Python and Flask.
 ## Play Online
 
 Play here:  
-**https://YOUR-RENDER-URL.onrender.com**
+**https://channy-wordle-world.onrender.com/**
 
 No installation is needed for players.  
 Just open the link in your browser and start playing.
