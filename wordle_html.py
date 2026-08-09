@@ -24,8 +24,8 @@ ANSWER_POOL_SIZE = 100
 
 WRONG_MESSAGES = [
     "HMM you sure? 👀",
-    "Okay stay calm 🧐",
-    "I just can't believe this 🤨",
+    "One more guess! 🧐",
+    "You can do better {name} 🤨",
     "Is this all you've got, {name}? 😏",
     "No way... 😵",
     "BAHAHAHAHAHAHA 😂",
@@ -642,7 +642,7 @@ h1 {
     <div class="name-box">
 
         <h2>
-            이름을 입력하세요
+            Type your name
         </h2>
 
         <p class="name-description">
