@@ -13,10 +13,10 @@ ANSWER_POOL_SIZE = 100
 
 WRONG_MESSAGES = [
     "HMM you sure? 👀",
-    "Okay stay calm 🧐",
-    "I just can't believe this 🤨",
+    "Okay {name}, stay calm 🧐",
+    "I might be judging now 🤨",
     "Is this all you've got, {name}? 😏",
-    "No way... 😵",
+    "You've got one last chance {name} 😵",
     "BAHAHAHAHAHAHA 😂",
 ]
 
@@ -78,7 +78,6 @@ def reset_game():
     session["answer"] = random.choice(ANSWER_WORDS)
     session["attempt"] = 0
     session["finished"] = False
-
 
 HTML = r"""
 <!DOCTYPE html>
@@ -212,7 +211,7 @@ button, input { font: inherit; }
 
 .title {
     margin: 0;
-    font-family: "Arial Black", "Helvetica Neue", Arial, sans-serif;
+    font-family: "Trebuchet MS", Arial, sans-serif;
     font-size: clamp(1.55rem, 6vw, 2.05rem);
     font-weight: 900;
     letter-spacing: 0.08em;
