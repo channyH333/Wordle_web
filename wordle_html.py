@@ -485,11 +485,78 @@ button, input { font: inherit; }
 }
 
 @media (max-width: 640px) {
-    .header { padding-left: 70px; padding-right: 70px; }
+    /* Reserve a real top toolbar area on phones so fixed buttons never cover the title. */
+    .top-left,
+    .top-right {
+        top: calc(env(safe-area-inset-top, 0px) + 10px);
+    }
+
+    .top-left {
+        left: 10px;
+    }
+
+    .top-right {
+        right: 10px;
+    }
+
+    .icon-button,
+    .stats-button,
+    .restart-button {
+        height: 40px;
+    }
+
+    .icon-button {
+        width: 40px;
+    }
+
+    .stats-button,
+    .restart-button {
+        padding: 0 11px;
+        font-size: 0.88rem;
+    }
+
+    .header {
+        padding:
+            calc(env(safe-area-inset-top, 0px) + 66px)
+            12px
+            10px;
+    }
+
+    .title {
+        font-size: clamp(1.55rem, 8vw, 2rem);
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+    }
+
+    .subtitle {
+        font-size: clamp(0.75rem, 3.5vw, 0.9rem);
+    }
+
     .stats-label { display: none; }
     .stats-panel { padding: 16px 10px; }
     .stats-table { font-size: 0.75rem; }
     .stats-table th, .stats-table td { padding: 8px 3px; }
+}
+
+@media (max-width: 390px) {
+    .top-left,
+    .top-right {
+        gap: 6px;
+    }
+
+    .stats-button,
+    .restart-button {
+        padding: 0 9px;
+        font-size: 0.82rem;
+    }
+
+    .header {
+        padding-top: calc(env(safe-area-inset-top, 0px) + 64px);
+    }
+
+    .title {
+        font-size: clamp(1.45rem, 7.6vw, 1.85rem);
+    }
 }
 
 @media (max-height: 740px) {
