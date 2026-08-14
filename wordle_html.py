@@ -79,6 +79,7 @@ def reset_game():
     session["attempt"] = 0
     session["finished"] = False
 
+
 HTML = r"""
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
@@ -154,8 +155,18 @@ button, input { font: inherit; }
     gap: 8px;
 }
 
+.top-right {
+    position: fixed;
+    top: 14px;
+    right: 14px;
+    z-index: 10001;
+    display: flex;
+    gap: 8px;
+}
+
 .icon-button,
-.stats-button {
+.stats-button,
+.restart-button {
     height: 42px;
     border: 1px solid var(--border);
     background: var(--surface);
@@ -173,13 +184,16 @@ button, input { font: inherit; }
     font-size: 1.2rem;
 }
 
-.stats-button {
-    position: fixed;
-    top: 14px;
-    right: 14px;
-    z-index: 10001;
+.stats-button,
+.restart-button {
     padding: 0 14px;
     border-radius: 6px;
+}
+
+.restart-button {
+    border-color: var(--button-bg);
+    background: var(--button-bg);
+    color: var(--button-text);
 }
 
 .icon-button:hover,
@@ -187,8 +201,13 @@ button, input { font: inherit; }
     background: var(--control-hover);
 }
 
+.restart-button:hover {
+    background: var(--button-hover);
+}
+
 .icon-button:active,
-.stats-button:active {
+.stats-button:active,
+.restart-button:active {
     transform: scale(0.95);
 }
 
@@ -289,7 +308,8 @@ button, input { font: inherit; }
     gap: 5px;
 }
 
-.keyboard-row.middle { padding: 0 5%; }
+.keyboard-row.middle { padding: 0 3%; }
+.keyboard-row.bottom { padding: 0 12%; }
 
 .key {
     flex: 1;
@@ -507,14 +527,26 @@ button, input { font: inherit; }
     </button>
 </div>
 
-<button
-    id="statsButton"
-    class="stats-button"
-    type="button"
-    title="Game statistics"
->
-    ▦ <span class="stats-label">Stats</span>
-</button>
+<div class="top-right">
+    <button
+        id="statsButton"
+        class="stats-button"
+        type="button"
+        title="Game statistics"
+    >
+        ▦ <span class="stats-label">Stats</span>
+    </button>
+
+    <button
+        id="restartButton"
+        class="restart-button hidden"
+        type="button"
+        title="Restart current game"
+        aria-label="Restart current game"
+    >
+        ↻ Restart
+    </button>
+</div>
 
 <div id="nameScreen" class="name-screen">
     <div class="name-box">
@@ -547,7 +579,7 @@ button, input { font: inherit; }
 
 <main class="game">
     <header class="header">
-        <h1 class="title">CHANNY'S WORDLE</h1>
+        <h1 class="title">Channy's WORDLE</h1>
         <p class="subtitle">Guess the five-letter word in six tries.</p>
     </header>
 
@@ -563,7 +595,7 @@ button, input { font: inherit; }
 
     <button
         id="againButton"
-        class="again"
+        class="again hidden"
         type="button"
     >
         again?
@@ -602,6 +634,7 @@ const nameError = document.getElementById("nameError");
 const themeToggle = document.getElementById("themeToggle");
 const backButton = document.getElementById("backButton");
 const statsButton = document.getElementById("statsButton");
+const restartButton = document.getElementById("restartButton");
 const playButton = document.getElementById("playButton");
 const againButton = document.getElementById("againButton");
 const statsOverlay = document.getElementById("statsOverlay");
@@ -609,9 +642,9 @@ const statsContent = document.getElementById("statsContent");
 const closeStatsButton = document.getElementById("closeStatsButton");
 
 const keyboardRows = [
-    [..."QWERTYUIOP"],
-    [..."ASDFGHJKL"],
-    ["ENTER", ..."ZXCVBNM", "⌫"]
+    [..."QWERTYUIOP", "⌫"],
+    [..."ASDFGHJKL", "ENTER"],
+    [..."ZXCVBNM"]
 ];
 
 const statePriority = {
@@ -721,6 +754,10 @@ function buildKeyboard() {
             row.classList.add("middle");
         }
 
+        if (rowIndex === 2) {
+            row.classList.add("bottom");
+        }
+
         keys.forEach(key => {
             const button = document.createElement("button");
 
@@ -779,6 +816,8 @@ function resetUI() {
     setStatus("Take your first guess.");
 
     backButton.classList.remove("hidden");
+    restartButton.classList.remove("hidden");
+    againButton.classList.add("hidden");
 }
 
 
@@ -1107,6 +1146,9 @@ async function submitGuess() {
         gameOver = data.game_over;
 
         if (gameOver) {
+            restartButton.classList.add("hidden");
+            againButton.classList.remove("hidden");
+
             addGameLog(
                 data.won,
                 data.attempt
@@ -1212,6 +1254,9 @@ async function backToName() {
         "hidden"
     );
 
+    restartButton.classList.add("hidden");
+    againButton.classList.add("hidden");
+
     nameInput.focus();
 }
 
@@ -1268,6 +1313,12 @@ closeStatsButton.addEventListener(
 playButton.addEventListener(
     "click",
     submitName
+);
+
+
+restartButton.addEventListener(
+    "click",
+    restartGame
 );
 
 
