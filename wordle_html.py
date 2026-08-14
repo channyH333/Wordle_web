@@ -567,6 +567,32 @@ button, input { font: inherit; }
     .key { height: 40px; }
     .again { margin-top: 7px; }
 }
+
+/* ==================================================
+   MOBILE KEYBOARD - BIGGER KEYS
+   ================================================== */
+
+@media (max-width: 640px) {
+    .keyboard {
+        padding: 0 8px;
+        gap: 8px;
+    }
+
+    .keyboard-row {
+        gap: 6px;
+    }
+
+    .key {
+        height: clamp(54px, 13vw, 62px);
+        font-size: clamp(0.95rem, 4vw, 1.1rem);
+        border-radius: 6px;
+    }
+
+    .key.wide {
+        font-size: clamp(0.72rem, 3.2vw, 0.9rem);
+    }
+}
+
 </style>
 </head>
 
@@ -1653,43 +1679,3 @@ if __name__ == "__main__":
         debug=False,
         use_reloader=False
     )
-
-/* ==================================================
-   MOBILE KEYBOARD - BIGGER KEYS
-   ================================================== */
-
-@media (max-width: 640px) {
-
-    .keyboard {
-        padding: 0 10px;
-        gap: 8px;
-    }
-
-    .keyboard-row {
-        gap: 6px;
-    }
-
-    .key {
-        height: clamp(
-            54px,
-            13vw,
-            62px
-        );
-
-        font-size: clamp(
-            0.95rem,
-            4vw,
-            1.1rem
-        );
-
-        border-radius: 6px;
-    }
-
-    .key.wide {
-        font-size: clamp(
-            0.72rem,
-            3.2vw,
-            0.9rem
-        );
-    }
-}
