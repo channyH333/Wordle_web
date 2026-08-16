@@ -28,7 +28,7 @@ Score Mode adds a **100-point scoring system** based on both accuracy and speed.
 
 👉 **Play Score Mode**
 
-https://channy-wordle-score.onrender.com
+https://channy-wordle-withscore.onrender.com
 
 ### Scoring
 
